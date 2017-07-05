@@ -39,6 +39,10 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="HtmlAgilityPack, Version=1.4.6.0, Culture=neutral, PublicKeyToken=bd319b19eaf3b43a, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>Lib\HtmlAgilityPack.dll</HintPath>
+    </Reference>
     <Reference Include="HtmlReportControl, Version=1.1.0.0, Culture=neutral, PublicKeyToken=8652ebef6f2bdf8e, processorArchitecture=MSIL">
       <HintPath>..\packages\HtmlReportControl.1.1.0.1\lib\net40\HtmlReportControl.dll</HintPath>
       <Private>True</Private>
@@ -110,6 +114,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="Global.asax" />
+    <Content Include="Lib\HtmlAgilityPack.dll" />
     <Content Include="Lib\Sitecore.ContentSearch.dll" />
     <Content Include="Lib\Sitecore.Kernel.dll" />
     <Content Include="Lib\Sitecore.Mvc.Analytics.dll" />
