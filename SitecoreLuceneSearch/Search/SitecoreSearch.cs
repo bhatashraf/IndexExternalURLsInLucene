@@ -18,10 +18,12 @@ using Lucene.Net.Analysis.Standard;
 //using Sitecore.Web.UI.WebControls;
 
 
-using System.Windows.Forms;
+//using System.Windows.Forms;
 using System.Text;
 using System.Text.RegularExpressions;
 using SitecoreFields = Sitecore.Data.Fields;
+using HtmlAgilityPack;
+
 namespace SitecoreLuceneSearch.Search
 {
     public class SitecoreSearch
@@ -32,7 +34,14 @@ namespace SitecoreLuceneSearch.Search
         //add characters that are should not be removed to this regex
         private static readonly Regex _notOkCharacter_ = new Regex(@"[^\w;&#@.:/\\?=|%!() -]", RegexOptions.Compiled);
 
-        string IndexFolderPath = @"C:\inetpub\wwwroot\Bupa.Com\Data\indexes";
+        string IndexFolderPath = @"C:\inetpub\wwwroot\Bupa.Com\Data\indexes"; //pending, need to do it
+
+        public struct LargestImage
+        {
+            public string imgSrc;
+            public double imgDimension;
+            public string imgAlt;
+        }
 
         private static string _luceneDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "externalURLs_lucene_index");
         private static FSDirectory _directoryTemp;
@@ -59,16 +68,10 @@ namespace SitecoreLuceneSearch.Search
             }
         }
 
-        // Image begin
-        //struct ImageItem
-        //{
-        //    public string src;
-        //    public string alt;
-        //};
-        // end image
-
         public List<Item> indexSitecoreContent()
         {
+
+
 
             // ID blogTemplateId = new Sitecore.Data.ID("{48587868-4A19-48BB-8FC9-F1DD31CB6C8E}");
             //var index = Sitecore.ContentSearch.ContentSearchManager.GetIndex("sitecore_master_index");
@@ -116,34 +119,59 @@ namespace SitecoreLuceneSearch.Search
 
             string htmlContent = string.Empty;
 
-            string[] ExternalLinksHtmlContent = new string[ExternalLinksFolder.Children.Count];
-
+           // string[] ExternalLinksHtmlContent = new string[ExternalLinksFolder.Children.Count];
+           // string ExternalPageHtmlContent;
             int count = 0;
-
             Sitecore.Data.Fields.ImageField imageField=null;
-             SitecoreFields.LinkField linkfield =null;
+            SitecoreFields.LinkField linkfield =null;
+            string externalurl;
+            // web page declaring 
+            var htmlWeb = new HtmlWeb();
+            HtmlAgilityPack.HtmlDocument document = new HtmlAgilityPack.HtmlDocument();
+            string webPageTitle;
+            string webPageContent;
+
+
+            // end declaring
             foreach (Item externalLinkItem in ExternalLinksFolder.Children)
             {
                 Document doc = new Document();
                 linkfield = externalLinkItem.Fields["ExternalURL"];
-                string externalurl = linkfield.Url;
+                externalurl = linkfield.Url;
 
                 imageField = externalLinkItem.Fields["Image"];
 
-                using (var client = new WebClient())
+                // webpage Title field
+                LargestImage largestImage = new LargestImage();
+                HtmlAgilityPack.HtmlDocument htmlDocument = new HtmlAgilityPack.HtmlDocument();
+                htmlDocument = htmlWeb.Load(externalurl);
+                webPageTitle = GetWebPageTitle(htmlDocument);
+                webPageContent = GetPageContent(htmlDocument);
+                largestImage = GetLargestWebPageSec(htmlDocument, externalurl);
+                // image field
+                if (largestImage.imgSrc == "") // populate image attributes from sitecore image field if there is no image found on the external web page
                 {
-                    ExternalLinksHtmlContent[count] = UnHtml(client.DownloadString(externalurl));
-                }               
+                    largestImage.imgSrc = Sitecore.Resources.Media.MediaManager.GetMediaUrl(imageField.MediaItem);
+                    largestImage.imgAlt = imageField.Alt;
+                }
 
-                doc.Add(new Field("ExternalURLContent", ExternalLinksHtmlContent[count], Field.Store.YES, Field.Index.ANALYZED));
-                doc.Add(new Field("Title", externalLinkItem.Fields["Title"].Value, Field.Store.YES, Field.Index.ANALYZED));
-                //doc.Add(new Field("Title", externalLinkItem.Fields["Image"].Value, Field.Store.YES, Field.Index.NOT_ANALYZED));
-                doc.Add(new Field("ExternalUrl", externalurl, Field.Store.YES, Field.Index.NOT_ANALYZED));
-                doc.Add(new Field("ImageSrc", Sitecore.Resources.Media.MediaManager.GetMediaUrl(imageField.MediaItem), Field.Store.YES, Field.Index.NOT_ANALYZED));
-                doc.Add(new Field("ImageAlt", imageField.Alt, Field.Store.YES, Field.Index.NOT_ANALYZED));
+                if(webPageTitle == "") // populate title from sitecore if webpage has no title or h1 tags
+                {
+                    webPageTitle = externalLinkItem.Fields["Title"].Value;
+                }
 
+                if (webPageContent == "")
+                {
+                    webPageContent = externalLinkItem.Fields["PageContent"].Value;
+                }
 
-
+                // end image field
+                doc.Add(new Field("External_WebPage_Content", webPageContent, Field.Store.YES, Field.Index.ANALYZED));
+                doc.Add(new Field("External_WebPage_Title", webPageTitle, Field.Store.YES, Field.Index.ANALYZED));
+                doc.Add(new Field("External_WebPage_Url", externalurl, Field.Store.YES, Field.Index.NOT_ANALYZED));
+                doc.Add(new Field("External_WebPage_ImageSrc", largestImage.imgSrc, Field.Store.YES, Field.Index.NOT_ANALYZED));
+                doc.Add(new Field("External_WebPage_ImageAlt", largestImage.imgAlt, Field.Store.YES, Field.Index.NOT_ANALYZED));
+                
                 writer.AddDocument(doc);
                 count++;
             }
@@ -153,43 +181,27 @@ namespace SitecoreLuceneSearch.Search
             writer.Dispose();
             #endregion
 
-
             return results;
         }
 
+        private static string GetPageContent(HtmlDocument doc)
+        {
+            doc.DocumentNode.Descendants().Where(n => n.Name == "script" || n.Name == "style" || n.Name == "noscript").ToList().ForEach(n => n.Remove());
+            doc.DocumentNode.SelectNodes("//comment()").ToList().ForEach(n => n.Remove());
+            string pageContent = UnHtml(doc.DocumentNode.SelectSingleNode("//body").InnerText.ToString());
+            return pageContent;
+        }
 
         public static String UnHtml(String html)
         {
             html = HttpUtility.UrlDecode(html);
             html = HttpUtility.HtmlDecode(html);
 
-            html = RemoveTag(html, "<!--", "-->");
-            html = RemoveTag(html, "<script", "</script>");
-            html = RemoveTag(html, "<style", "</style>");
-
             //replace matches of these regexes with space
             html = _tags_.Replace(html, " ");
             html = _notOkCharacter_.Replace(html, " ");
             html = SingleSpacedTrim(html);
 
-            return html;
-        }
-
-        private static String RemoveTag(String html, String startTag, String endTag)
-        {
-            Boolean bAgain;
-            do
-            {
-                bAgain = false;
-                Int32 startTagPos = html.IndexOf(startTag, 0, StringComparison.CurrentCultureIgnoreCase);
-                if (startTagPos < 0)
-                    continue;
-                Int32 endTagPos = html.IndexOf(endTag, startTagPos + 1, StringComparison.CurrentCultureIgnoreCase);
-                if (endTagPos <= startTagPos)
-                    continue;
-                html = html.Remove(startTagPos, endTagPos - startTagPos + endTag.Length);
-                bAgain = true;
-            } while (bAgain);
             return html;
         }
 
@@ -221,5 +233,106 @@ namespace SitecoreLuceneSearch.Search
         }
 
         public List<Item> results { get; set; }
+
+        private static LargestImage GetLargestWebPageSec(HtmlDocument doc, string webPageUrl)
+        {
+            // for getting domain from the url
+            var url = new Uri(webPageUrl);
+            int protocalAndHostnameLength = url.AbsoluteUri.Count() - url.AbsolutePath.Count();
+            string protocalAndHostname = url.ToString().Substring(0, protocalAndHostnameLength);
+            // end domain
+            //  request for images
+            WebClient webClient = new WebClient();
+            byte[] imageBytes = null;
+            MemoryStream memoryStream = null;
+            System.Drawing.Image image;
+            LargestImage largestImage = new LargestImage();
+            string imageURL = "";
+            // end request
+            int count = 0;
+
+
+            // Now, using LINQ to get all Images from the webpage
+            List<HtmlNode> imageNodes = null;
+            if (doc.DocumentNode.SelectNodes("//img") != null)
+            {
+                imageNodes = (from HtmlNode node in doc.DocumentNode.SelectNodes("//img")
+                              where node.Name == "img"
+                              select node).ToList();
+
+
+                foreach (HtmlNode node in imageNodes)
+                {
+                    if (!string.IsNullOrEmpty(node.Attributes["src"].Value) && !node.Attributes["src"].Value.EndsWith(".gif"))
+                    {
+                        if (node.Attributes["src"].Value.StartsWith("h"))
+                        {
+                            imageURL = node.Attributes["src"].Value;
+                        }
+                        else
+                        {
+                            imageURL = (node.Attributes["src"].Value.StartsWith("/")) ? protocalAndHostname + node.Attributes["src"].Value : protocalAndHostname + "/" + node.Attributes["src"].Value;
+                        }
+
+                        imageBytes = webClient.DownloadData(imageURL);
+
+                        if (imageBytes.Count() > 0)
+                        {
+                            memoryStream = new MemoryStream(imageBytes);
+                            image = System.Drawing.Image.FromStream(memoryStream);
+
+                            if (image.Height > 0 && image.Width > 0)
+                            {
+                                if (count == 0)
+                                {
+                                    largestImage.imgSrc = imageURL;
+                                    largestImage.imgDimension = image.Width * image.Height;
+                                    if (node.Attributes["alt"] != null)
+                                    {
+                                        largestImage.imgAlt = node.Attributes["alt"].Value;
+                                    }
+                                }
+
+                                if ((image.Width * image.Height) > largestImage.imgDimension)
+                                {
+                                    largestImage.imgSrc = imageURL;
+                                    largestImage.imgDimension = image.Width * image.Height;
+                                    if (node.Attributes["alt"] != null)
+                                    {
+                                        largestImage.imgAlt = node.Attributes["alt"].Value;
+                                    }
+                                }
+                            }
+                        }
+
+                        count++;
+
+                    }
+
+                }
+            }
+
+
+            return largestImage;
+        }
+     
+        private static string GetWebPageTitle(HtmlDocument doc)
+        {
+            // get the title of the webpage
+            string pageTitle = "";
+
+            if (doc.DocumentNode.SelectSingleNode("//title") != null)
+            {
+                pageTitle = doc.DocumentNode.SelectSingleNode("//title").InnerText.Trim();
+            }
+            // if title is not present
+            if (pageTitle == "" && doc.DocumentNode.SelectNodes("//h1") != null)
+            {
+                pageTitle = doc.DocumentNode.SelectNodes("//h1").FirstOrDefault().InnerHtml.Trim();
+            }
+            return pageTitle;
+        }
+
+
     }
 }
